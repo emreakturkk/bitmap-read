@@ -1,92 +1,108 @@
-#include <iostream>
-#include <cstdio>
-#include <cstdlib>
-#include <string.h>
 #include "bitmap.h"
 
-using namespace std;
-
-BYTE* LoadBMP(char* bmpfile, int* width, int* height, long* size)
+BYTE* LoadBMP(char *bmpfile, unsigned int *width, unsigned int *height, unsigned int *size)
 {
     BITMAPFILEHEADER bmpheader;
     BITMAPINFOHEADER bmpinfo;
-    // open the input bmp for reading in binary mode
-	FILE* img = fopen(bmpfile, "rb");
-	// make sure the file opens properly
-	if(img == NULL)
+
+	FILE *bmp = fopen(bmpfile, "rb");
+
+	if(bmp == NULL)
 	{
-		fputs("Error reading file", stderr);
-        fclose(img);
+		fputs("OPEN", stderr);
+        fclose(bmp);
 		exit(1);
-	}	
+	}
 	// read the bmp file header
-	if(fread(&bmpheader, sizeof(BITMAPFILEHEADER), 1, img) == false)
+	if(fread(&bmpheader, 1, sizeof(BITMAPFILEHEADER), bmp) != sizeof(BITMAPFILEHEADER))
     {
-        fclose(img);
+        fputs("FREAD, BITMAPFILEHEADER", stderr);
+        fclose(bmp);
         exit(1);
     }
     // read the bmp info header
-	if(fread(&bmpinfo, sizeof(BITMAPINFOHEADER), 1, img) == false)
+	if(fread(&bmpinfo, 1, sizeof(BITMAPINFOHEADER), bmp) != sizeof(BITMAPINFOHEADER))
     {
-        fclose(img);
+        fputs("FREAD, BITMAPINFOHEADER", stderr);
+        fclose(bmp);
         exit(1);
     }
     // check if file is actually a bmp
 	if(bmpheader.bfType != 19778) // hexidecimal address is 0x4D42
 	{
-		cout << "File is not of bitmap type!" << endl;
-        fclose(img);
-		exit(1);
+		fputs("bmpheader.bfType", stderr);
+        fclose(bmp);
+        exit(1);
 	}
     // check if bmp is uncompressed
-    if (bmpinfo.biCompress != 0)  
+    if (bmpinfo.biCompress != 0)
     {
-        fclose(img);
+        fputs("bmpinfo.biCompress", stderr);
+        fclose(bmp);
         exit(1);
     }
     // check if we have 24 bit bmp
-	if (bmpinfo.biBitCount != 24) 
+	if (bmpinfo.biBitCount != 24)
     {
-        fclose(img);
+        fputs("bmpinfo.biBitCount", stderr);
+        fclose(bmp);
         exit(1);
     }
     // get image measurements
-	*width = bmpinfo.biWidth;
-	*height = abs(bmpinfo.biHeight);
-    
+	*width  = bmpinfo.biWidth;
+	*height = bmpinfo.biHeight;
+
     // create buffer to hold the data
 	*size = bmpheader.bfSize - bmpheader.bfOffBits;
 
     BYTE* buffer = new BYTE[*size];
 
 	// move file pointer to start of bitmap data
-	fseek(img, bmpheader.bfOffBits, SEEK_SET);
+	if (fseek(bmp, bmpheader.bfOffBits, SEEK_SET) != 0)
+	{
+        fputs("FSEEK", stderr);
+        exit(1);
+	}
+
 	// read bmp data
-    //fread(buffer, sizeof(BYTE),sizeof(*size), img);
-    if(fread(buffer, *size ,1 ,img) == false)
+    if(fread(buffer, 1, (*size), bmp) != (*size))
     {
-        fclose(img);
+        fputs("FREAD, BITMAP SIZE", stderr);
+        fclose(bmp);
         exit(1);
     }
 
-    /*
-    //swap the r and b values to get RGB (bitmap is BGR)
-    BYTE tempRGB;
-    for (int i = 0; i < width*height*3; i+=3)
-    {
-        tempRGB = buffer[i];
-        buffer[i] = buffer[i + 2];
-        buffer[i + 2] = tempRGB;
-    }
-    */
+	fclose(bmp);
 
-    // everything successful here: close file and return buffer
-	fclose(img);
+    // find the number of padding bytes
+	unsigned int padding = 0;
+	unsigned int scanlinebytes = (*width) * 3;
+	while ((scanlinebytes + padding) % 4 != 0)     // DWORD = 4 bytes
+		padding++;
+	// get the padded scanline width
+	unsigned int psw = scanlinebytes + padding;
 
-	return buffer;
+	// create new buffer
+	BYTE* newbuf = new BYTE[(*width) * (*height) * 3];
+
+	// now we loop trough all bytes of the original buffer,
+	// swap the R and B bytes and the scanlines
+	unsigned int bufpos = 0;
+	unsigned int newpos = 0;
+	for (unsigned int row = 0; row < (*height); row++) {
+        for (unsigned int column = 0; column < (*width); column++) {
+            newpos = row * ((*width) * 3) + column * 3;
+            bufpos = ((*height) - row - 1) * psw + column * 3;
+            newbuf[newpos]     = buffer[bufpos + 2];
+            newbuf[newpos + 1] = buffer[bufpos + 1];
+            newbuf[newpos + 2] = buffer[bufpos + 0];
+        }
+	}
+
+	return newbuf;
 }
 
-bool SaveBMP(char* bmpfile, BYTE* buffer, int width, int height)
+void SaveBMP(char* bmpfile, BYTE* buffer, unsigned int width, unsigned int height)
 {
     BITMAPFILEHEADER bmp_head;
     BITMAPINFOHEADER bmp_info;
@@ -95,10 +111,10 @@ bool SaveBMP(char* bmpfile, BYTE* buffer, int width, int height)
 	memset(&bmp_head, 0, sizeof (BITMAPFILEHEADER));
 	memset(&bmp_info, 0, sizeof (BITMAPINFOHEADER));
 
-    long size = width * height * 3;
+    unsigned int size = width * height * 3;
 
     bmp_head.bfType = 0x4D42; // 'BM'
-    bmp_head.bfSize= size + sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER); // 24 + head + info no quad    
+    bmp_head.bfSize = size + sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER); // 24 + head + info no quad
     bmp_head.bfReserved1 = 0;
     bmp_head.bfReserved2 = 0;
     bmp_head.bfOffBits = bmp_head.bfSize - size;
@@ -118,145 +134,95 @@ bool SaveBMP(char* bmpfile, BYTE* buffer, int width, int height)
     // finish the initial of infohead;
 
     // copy the data
-    FILE *fp;
-    if (!(fp = fopen(bmpfile,"wb"))) return 0;
+    FILE *bmp = fopen(bmpfile, "wb");
 
-    fwrite(&bmp_head, sizeof(BITMAPFILEHEADER),1 , fp);
-    fwrite(&bmp_info, sizeof(BITMAPINFOHEADER), 1, fp);
-    fwrite(buffer, size, 1, fp);
-    fclose(fp);
+    if (bmp == NULL) {
 
-    return 1;
+        fputs("OPEN", stderr);
+        fclose(bmp);
+		exit(1);
+    }
+
+    if (fwrite(&bmp_head, 1, sizeof(BITMAPFILEHEADER), bmp) != sizeof(BITMAPFILEHEADER)) {
+
+        fputs("FWRITE, BITMAPFILEHEADER", stderr);
+        fclose(bmp);
+		exit(1);
+    }
+
+    if (fwrite(&bmp_info, 1, sizeof(BITMAPINFOHEADER), bmp) != sizeof(BITMAPINFOHEADER)) {
+
+        fputs("FWRITE, BITMAPINFOHEADER", stderr);
+        fclose(bmp);
+		exit(1);
+    }
+
+    if(fwrite(buffer, 1, size, bmp) != size) {
+
+        fputs("FWRITE, BITMAP SI", stderr);
+        fclose(bmp);
+		exit(1);
+    }
 }
 
-BYTE* ConvertRGB(BYTE* buffer, int width, int height)
+BYTE* ConvertBMPToIntensity(BYTE *buffer, unsigned int width, unsigned int height)
 {
-    BYTE* tBuffer = new BYTE[height * width * 3];
-    
-    int padding = 0;
-	int scanlinebytes = width * 3;
-	while ((scanlinebytes + padding) % 4 != 0)
-		padding++;
-    int psw = scanlinebytes + padding;
-    
-    long bufpos = 0;
-	long newpos = 0;
-	for (int row = 0; row < height; row++)
-        for (int column = 0; column < width; column++)  { 
-                bufpos = (height - row - 1) * psw + column * 3;
-                tBuffer[newpos]     = buffer[bufpos + 2]; // red
-                tBuffer[newpos + 1] = buffer[bufpos + 1]; // green
-                tBuffer[newpos + 2] = buffer[bufpos];     // blue
-                newpos += 3;
-            }
+    // first make sure the parameters are valid
+	if ((buffer == NULL) || (width == 0) || (height == 0))
+		return NULL;
 
-	return tBuffer;
-}
+	BYTE *newbuf = new BYTE[width * height];
 
-BYTE* ConvertBGR(BYTE* buffer, int width, int height)
-{
-   
-	int padding = 0;
-	int scanlinebytes = width * 3;
-	while ((scanlinebytes + padding) % 4 != 0)     // DWORD = 4 bytes
-		padding++;
-	// get the padded scanline width
-	int psw = scanlinebytes + padding;
-	// we can already store the size of the new padded buffer
-	long newsize = height * psw;
-
-	// and create new buffer
-	BYTE* newbuf = new BYTE[newsize];
-
-	// fill the buffer with zero bytes then we dont have to add
-	// extra padding zero bytes later on
-	memset(newbuf, 0, sizeof(newsize));
-
-	// now we loop trough all bytes of the original buffer, 
-	// swap the R and B bytes and the scanlines
-	long bufpos = 0;
-	long newpos = 0;
-	for (int row = 0; row < height; row++)
-        for (int column = 0; column < width; column++){
-            newpos = (height - row - 1) * psw + column * 3; // position in padded buffer
-            newbuf[newpos]     = buffer[bufpos + 2]; //  blue
-            newbuf[newpos + 1] = buffer[bufpos + 1]; //  green
-            newbuf[newpos + 2] = buffer[bufpos];     //  red
-            bufpos += 3;
+	unsigned int pos = 0, newpos = 0;
+	for (unsigned int row = 0; row < height; row++) {
+        for (unsigned int column = 0; column < width; column++) {
+            pos    = row * (width * 3) + column * 3;
+            newpos = row * width + column;
+            newbuf[newpos] = (BYTE)( 0.3 * buffer[pos] + 0.59 * buffer[pos + 1] + 0.11 * buffer[pos + 2]);
         }
-
-	return newbuf;
-}
-
-BYTE* ConvertBMPToIntensity(BYTE* Buffer, int width, int height)
-{
-	// first make sure the parameters are valid
-	if ((Buffer == NULL) || (width == 0) || (height == 0))
-		return NULL;
-
-	// find the number of padding bytes
-
-	int padding = 0;
-	int scanlinebytes = width * 3;
-	while ((scanlinebytes + padding) % 4 != 0)     // DWORD = 4 bytes
-		padding++;
-	// get the padded scanline width
-	int psw = scanlinebytes + padding;
-
-	// create new buffer
-	BYTE* newbuf = new BYTE[width*height];
-
-	// now we loop trough all bytes of the original buffer, 
-	// swap the R and B bytes and the scanlines
-	long bufpos = 0;
-	long newpos = 0;
-	for (int row = 0; row < height; row++)
-        for (int column = 0; column < width; column++)  {
-                newpos = row * width + column;
-                bufpos = (height - row - 1) * psw + column * 3;
-                newbuf[newpos] = (BYTE)(0.11*Buffer[bufpos + 2] + 0.59*Buffer[bufpos + 1] + 0.3*Buffer[bufpos]);
-            }
-
-	return newbuf;
-}//ConvetBMPToIntensity
-
-BYTE* ConvertIntensityToBMP(BYTE* Buffer, int width, int height)
-{
-	// first make sure the parameters are valid
-	if ((NULL == Buffer) || (width == 0) || (height == 0))
-		return NULL;
-
-	// now we have to find with how many bytes
-	// we have to pad for the next DWORD boundary	
-
-	int padding = 0;
-	int scanlinebytes = width * 3;
-	while ((scanlinebytes + padding) % 4 != 0)     // DWORD = 4 bytes
-		padding++;
-	// get the padded scanline width
-	int psw = scanlinebytes + padding;
-	// we can already store the size of the new padded buffer
-	long newsize = height * psw;
-
-	// and create new buffer
-	BYTE* newbuf = new BYTE[newsize];
-
-	// fill the buffer with zero bytes then we dont have to add
-	// extra padding zero bytes later on
-	memset(newbuf, 0, sizeof(newsize));
-
-	// now we loop trough all bytes of the original buffer, 
-	// swap the R and B bytes and the scanlines
-	long bufpos = 0;
-	long newpos = 0;
-	for (int row = 0; row < height; row++)
-	for (int column = 0; column < width; column++)  	{
-		bufpos = row * width + column;     // position in original buffer
-		newpos = (height - row - 1) * psw + column * 3;           // position in padded buffer
-		newbuf[newpos] = Buffer[bufpos];       //  blue
-		newbuf[newpos + 1] = Buffer[bufpos];   //  green
-		newbuf[newpos + 2] = Buffer[bufpos];   //  red
 	}
 
 	return newbuf;
-} //ConvertIntensityToBMP
+}
+
+BYTE* ConvertIntensityToBMP(BYTE *buffer, unsigned int width, unsigned int height)
+{
+	// first make sure the parameters are valid
+	if ((buffer == NULL) || (width == 0) || (height == 0))
+		return NULL;
+
+	// now we have to find with how many bytes
+	// we have to pad for the next DWORD boundary
+
+	unsigned int padding = 0;
+	unsigned int scanlinebytes = width * 3;
+	while ((scanlinebytes + padding) % 4 != 0)     // DWORD = 4 bytes
+		padding++;
+	// get the padded scanline width
+	unsigned int psw = scanlinebytes + padding;
+	// we can already store the size of the new padded buffer
+	unsigned int newsize = height * psw;
+
+	// and create new buffer
+	BYTE* newbuf = new BYTE[newsize];
+
+	// fill the buffer with zero bytes then we dont have to add
+	// extra padding zero bytes later on
+	memset(newbuf, 0, sizeof(newsize));
+
+	// now we loop trough all bytes of the original buffer,
+	// swap the R and B bytes and the scanlines
+	unsigned int bufpos = 0;
+	unsigned int newpos = 0;
+	for (unsigned int row = 0; row < height; row++){
+        for (unsigned int column = 0; column < width; column++) {
+            bufpos = row * width + column;                         // position in original buffer
+            newpos = (height - row - 1) * psw + column * 3;        // position in padded buffer
+            newbuf[newpos]     = buffer[bufpos];                   //  blue
+            newbuf[newpos + 1] = buffer[bufpos];                   //  green
+            newbuf[newpos + 2] = buffer[bufpos];                   //  red
+        }
+	}
+
+	return newbuf;
+}
